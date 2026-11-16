@@ -478,7 +478,7 @@ class TabletSetupDialog:
 
     def __init__(
         self,
-        parent: tk.Tk,
+        parent: tk.Misc,
         initial_model: str = DEFAULT_TABLET_MODEL,
         initial_w: float = DEFAULT_TABLET_WIDTH_MM,
         initial_h: float = DEFAULT_TABLET_HEIGHT_MM,
@@ -737,7 +737,7 @@ class DisplaySetupDialog:
 
     def __init__(
         self,
-        parent: tk.Tk,
+        parent: tk.Misc,
         initial_name: str | None = None,
         initial_w: int | None = None,
         initial_h: int | None = None,
@@ -1149,6 +1149,364 @@ class DisplaySetupDialog:
         self.result = None
         self.win.grab_release()
         self.win.destroy()
+
+
+class SettingsWindow:
+    """Modal settings menu consolidating tray toggle, tablet/display setup, and stats reset."""
+
+    def __init__(self, app: "WacomTrackerApp"):
+        self.app = app
+        self.win = tk.Toplevel(app.root)
+        self.win.title("Wacom Tracker Settings")
+        self.win.configure(bg="#18181b")
+        self.win.resizable(False, False)
+
+        self._build_ui()
+        self.sync_state()
+
+        self.win.protocol("WM_DELETE_WINDOW", self.close)
+        self.win.update_idletasks()
+
+        sw = self.win.winfo_screenwidth()
+        sh = self.win.winfo_screenheight()
+        ww = self.win.winfo_reqwidth()
+        wh = self.win.winfo_reqheight()
+        self.win.geometry(f"+{(sw - ww) // 2}+{(sh - wh) // 2}")
+
+        self.win.grab_set()
+        self.win.focus_force()
+
+    def _build_ui(self):
+        pad = tk.Frame(self.win, bg="#18181b")
+        pad.pack(padx=20, pady=18)
+
+        tk.Label(
+            pad,
+            text="SETTINGS",
+            font=("Segoe UI", 10, "bold"),
+            fg="#38bdf8",
+            bg="#18181b",
+            anchor="w",
+        ).pack(fill="x", pady=(0, 12))
+
+        # --- Section 1: Hardware & Display ---
+        tk.Label(
+            pad,
+            text="HARDWARE & DISPLAY",
+            font=("Segoe UI", 8, "bold"),
+            fg="#71717a",
+            bg="#18181b",
+            anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+
+        hw_card = tk.Frame(
+            pad,
+            bg="#1f1f23",
+            highlightbackground="#3f3f46",
+            highlightthickness=1,
+        )
+        hw_card.pack(fill="x", pady=(0, 14))
+
+        # Tablet row
+        tablet_row = tk.Frame(hw_card, bg="#1f1f23")
+        tablet_row.pack(fill="x", padx=12, pady=(10, 8))
+
+        tablet_info = tk.Frame(tablet_row, bg="#1f1f23")
+        tablet_info.pack(side="left", fill="x", expand=True, padx=(0, 12))
+
+        tk.Label(
+            tablet_info,
+            text="Wacom Tablet Active Area",
+            font=("Segoe UI", 9, "bold"),
+            fg="#f4f4f5",
+            bg="#1f1f23",
+            anchor="w",
+        ).pack(fill="x")
+
+        self.lbl_tablet_val = tk.Label(
+            tablet_info,
+            text="",
+            font=("Segoe UI", 8),
+            fg="#a1a1aa",
+            bg="#1f1f23",
+            anchor="w",
+        )
+        self.lbl_tablet_val.pack(fill="x")
+
+        tk.Button(
+            tablet_row,
+            text="Configure...",
+            width=11,
+            font=("Segoe UI", 8, "bold"),
+            command=self._configure_tablet,
+            bg="#27272a",
+            fg="#fbbf24",
+            activebackground="#3f3f46",
+            activeforeground="#fde68a",
+            relief="flat",
+            cursor="hand2",
+        ).pack(side="right")
+
+        tk.Frame(hw_card, bg="#2e2e34", height=1).pack(fill="x", padx=12)
+
+        # Display row
+        display_row = tk.Frame(hw_card, bg="#1f1f23")
+        display_row.pack(fill="x", padx=12, pady=(8, 10))
+
+        display_info = tk.Frame(display_row, bg="#1f1f23")
+        display_info.pack(side="left", fill="x", expand=True, padx=(0, 12))
+
+        tk.Label(
+            display_info,
+            text="Mapped Display Region",
+            font=("Segoe UI", 9, "bold"),
+            fg="#f4f4f5",
+            bg="#1f1f23",
+            anchor="w",
+        ).pack(fill="x")
+
+        self.lbl_display_val = tk.Label(
+            display_info,
+            text="",
+            font=("Segoe UI", 8),
+            fg="#a1a1aa",
+            bg="#1f1f23",
+            anchor="w",
+        )
+        self.lbl_display_val.pack(fill="x")
+
+        tk.Button(
+            display_row,
+            text="Configure...",
+            width=11,
+            font=("Segoe UI", 8, "bold"),
+            command=self._configure_display,
+            bg="#27272a",
+            fg="#c084fc",
+            activebackground="#3f3f46",
+            activeforeground="#e9d5ff",
+            relief="flat",
+            cursor="hand2",
+        ).pack(side="right")
+
+        # --- Section 2: Window & System Tray ---
+        tk.Label(
+            pad,
+            text="WINDOW & TRAY BEHAVIOR",
+            font=("Segoe UI", 8, "bold"),
+            fg="#71717a",
+            bg="#18181b",
+            anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+
+        tray_card = tk.Frame(
+            pad,
+            bg="#1f1f23",
+            highlightbackground="#3f3f46",
+            highlightthickness=1,
+        )
+        tray_card.pack(fill="x", pady=(0, 14))
+
+        tray_row = tk.Frame(tray_card, bg="#1f1f23")
+        tray_row.pack(fill="x", padx=12, pady=10)
+
+        tray_info = tk.Frame(tray_row, bg="#1f1f23")
+        tray_info.pack(side="left", fill="x", expand=True, padx=(0, 12))
+
+        tk.Label(
+            tray_info,
+            text="Minimize to system tray on close",
+            font=("Segoe UI", 9, "bold"),
+            fg="#f4f4f5",
+            bg="#1f1f23",
+            anchor="w",
+        ).pack(fill="x")
+
+        tk.Label(
+            tray_info,
+            text="Keep tracking in background when clicking window X",
+            font=("Segoe UI", 8),
+            fg="#a1a1aa",
+            bg="#1f1f23",
+            anchor="w",
+        ).pack(fill="x")
+
+        self.btn_tray_toggle = tk.Button(
+            tray_row,
+            text="ON",
+            width=8,
+            font=("Segoe UI", 8, "bold"),
+            command=self._toggle_tray_setting,
+            relief="flat",
+            cursor="hand2",
+        )
+        self.btn_tray_toggle.pack(side="right")
+
+        # --- Section 3: Data & Statistics ---
+        tk.Label(
+            pad,
+            text="DATA & STATISTICS",
+            font=("Segoe UI", 8, "bold"),
+            fg="#71717a",
+            bg="#18181b",
+            anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+
+        data_card = tk.Frame(
+            pad,
+            bg="#1f1f23",
+            highlightbackground="#3f3f46",
+            highlightthickness=1,
+        )
+        data_card.pack(fill="x", pady=(0, 16))
+
+        reset_row = tk.Frame(data_card, bg="#1f1f23")
+        reset_row.pack(fill="x", padx=12, pady=10)
+
+        reset_info = tk.Frame(reset_row, bg="#1f1f23")
+        reset_info.pack(side="left", fill="x", expand=True, padx=(0, 12))
+
+        tk.Label(
+            reset_info,
+            text="Reset All Statistics",
+            font=("Segoe UI", 9, "bold"),
+            fg="#f4f4f5",
+            bg="#1f1f23",
+            anchor="w",
+        ).pack(fill="x")
+
+        tk.Label(
+            reset_info,
+            text="Permanently clear lifetime distances and daily history",
+            font=("Segoe UI", 8),
+            fg="#a1a1aa",
+            bg="#1f1f23",
+            anchor="w",
+        ).pack(fill="x")
+
+        tk.Button(
+            reset_row,
+            text="Reset Stats...",
+            width=11,
+            font=("Segoe UI", 8, "bold"),
+            command=self._reset_stats_with_confirmation,
+            bg="#3f1d1d",
+            fg="#f87171",
+            activebackground="#5c2626",
+            activeforeground="#fecaca",
+            relief="flat",
+            cursor="hand2",
+        ).pack(side="right")
+
+        # Bottom Close Button
+        btn_row = tk.Frame(pad, bg="#18181b")
+        btn_row.pack(fill="x")
+
+        tk.Button(
+            btn_row,
+            text="Close",
+            width=12,
+            font=("Segoe UI", 9, "bold"),
+            command=self.close,
+            bg="#27272a",
+            fg="#f4f4f5",
+            activebackground="#3f3f46",
+            activeforeground="#ffffff",
+            relief="flat",
+            cursor="hand2",
+        ).pack(side="right")
+
+        self.win.bind("<Escape>", lambda _e: self.close())
+
+    def sync_state(self):
+        if not self.win.winfo_exists():
+            return
+        with self.app.lock:
+            t_model = self.app.tablet_model
+            t_w = self.app.tablet_width_mm
+            t_h = self.app.tablet_height_mm
+            d_name = self.app.display_name
+            d_w = self.app.display_width_px
+            d_h = self.app.display_height_px
+            d_ox = self.app.display_offset_x
+            d_oy = self.app.display_offset_y
+            min_tray = self.app.minimize_to_tray
+
+        self.lbl_tablet_val.config(
+            text=f"{t_model} ({t_w:g} × {t_h:g} mm)"
+        )
+        self.lbl_display_val.config(
+            text=f"{d_name} ({d_w}×{d_h} @ {d_ox}, {d_oy})"
+        )
+        if min_tray:
+            self.btn_tray_toggle.config(
+                text="ON",
+                bg="#14532d",
+                fg="#4ade80",
+                activebackground="#166534",
+                activeforeground="#86efac",
+            )
+        else:
+            self.btn_tray_toggle.config(
+                text="OFF",
+                bg="#27272a",
+                fg="#a1a1aa",
+                activebackground="#3f3f46",
+                activeforeground="#f4f4f5",
+            )
+
+    def _configure_tablet(self):
+        self.app._open_tablet_settings(parent=self.win)
+        if self.win.winfo_exists():
+            self.win.grab_set()
+            self.win.focus_force()
+            self.sync_state()
+
+    def _configure_display(self):
+        self.app._open_display_settings(parent=self.win)
+        if self.win.winfo_exists():
+            self.win.grab_set()
+            self.win.focus_force()
+            self.sync_state()
+
+    def _toggle_tray_setting(self):
+        self.app._toggle_minimize_to_tray()
+        self.sync_state()
+
+    def _reset_stats_with_confirmation(self):
+        confirmed = messagebox.askyesno(
+            "Confirm Statistics Reset",
+            "Are you sure you want to reset all statistics?\n\n"
+            "This will permanently erase all lifetime distances (Drawn, Hover, Total), "
+            "current session counters, and daily graph/histogram history.\n\n"
+            "This action cannot be undone.",
+            icon="warning",
+            parent=self.win,
+        )
+        if not confirmed:
+            if self.win.winfo_exists():
+                self.win.grab_set()
+                self.win.focus_force()
+            return
+
+        self.app._execute_reset_counters()
+        if self.win.winfo_exists():
+            self.win.grab_set()
+            self.win.focus_force()
+            messagebox.showinfo(
+                "Statistics Reset",
+                "All distance statistics and history have been reset to 0.",
+                parent=self.win,
+            )
+            if self.win.winfo_exists():
+                self.win.grab_set()
+                self.win.focus_force()
+
+    def close(self):
+        self.app.settings_window = None
+        if self.win.winfo_exists():
+            self.win.grab_release()
+            self.win.destroy()
 
 
 class WacomDigitizerSpec:
@@ -2221,6 +2579,7 @@ class WacomTrackerApp:
         self._save_btn_after_id: str | None = None
         self.unit_buttons: dict[str, tk.Button] = {}
         self.stats_window: WacomStatsWindow | None = None
+        self.settings_window: SettingsWindow | None = None
         self.tray_icon: pystray.Icon | None = None
         self._is_quitting = False
 
@@ -2336,8 +2695,10 @@ class WacomTrackerApp:
             self._quit_app()
 
     def _minimize_to_tray(self):
-        """Hides the main (and stats) window to the system tray while tracking continues."""
+        """Hides the main (and child) windows to the system tray while tracking continues."""
         self._save_data()
+        if self.settings_window is not None and self.settings_window.win.winfo_exists():
+            self.settings_window.close()
         if self.stats_window is not None and self.stats_window.win.winfo_exists():
             self.stats_window.close()
         self.root.withdraw()
@@ -2369,6 +2730,8 @@ class WacomTrackerApp:
                 self.tray_icon.update_menu()
             except Exception:
                 pass
+        if self.settings_window is not None and self.settings_window.win.winfo_exists():
+            self.settings_window.sync_state()
         self._save_data()
         # If the user disabled minimize-to-tray while the window is already hidden, restore it
         if not enabled and not self.root.winfo_viewable():
@@ -2421,9 +2784,9 @@ class WacomTrackerApp:
                 text=f"Display: {display_name} ({width_px}×{height_px} @ {offset_x}, {offset_y})"
             )
 
-    def _open_tablet_settings(self):
+    def _open_tablet_settings(self, parent: tk.Misc | None = None):
         dlg = TabletSetupDialog(
-            self.root,
+            parent or self.root,
             initial_model=self.tablet_model,
             initial_w=self.tablet_width_mm,
             initial_h=self.tablet_height_mm,
@@ -2435,9 +2798,9 @@ class WacomTrackerApp:
             self._apply_tablet_properties(model_name, w_mm, h_mm)
             self._save_data()
 
-    def _open_display_settings(self):
+    def _open_display_settings(self, parent: tk.Misc | None = None):
         dlg = DisplaySetupDialog(
-            self.root,
+            parent or self.root,
             initial_name=self.display_name,
             initial_w=self.display_width_px,
             initial_h=self.display_height_px,
@@ -2450,6 +2813,15 @@ class WacomTrackerApp:
             d_name, d_w, d_h, d_ox, d_oy = dlg.result
             self._apply_display_properties(d_name, d_w, d_h, d_ox, d_oy)
             self._save_data()
+
+    def _open_settings(self):
+        if self.settings_window is not None and self.settings_window.win.winfo_exists():
+            self.settings_window.win.deiconify()
+            self.settings_window.win.lift()
+            self.settings_window.win.focus_force()
+            self.settings_window.sync_state()
+            return
+        self.settings_window = SettingsWindow(self)
 
     def _record_distance_locked(self, dist_mm: float, is_pen_down: bool):
         """Accumulates lifetime, session, and daily distances (caller holds self.lock)."""
@@ -3114,77 +3486,55 @@ class WacomTrackerApp:
         )
         self.lbl_session.pack(padx=14, pady=(6, 10))
 
-        # Controls (2x3 symmetrical grid)
+        # Controls (2x2 symmetrical grid)
         btn_frame = tk.Frame(self.root, bg="#18181b")
         btn_frame.pack(padx=14, pady=(0, 14))
 
         tk.Button(
             btn_frame,
             text="Stats",
-            width=9,
+            width=12,
             command=self._open_stats,
             bg="#27272a",
             fg="#38bdf8",
             relief="flat",
             cursor="hand2",
-        ).grid(row=0, column=0, padx=3, pady=3)
+        ).grid(row=0, column=0, padx=4, pady=3)
 
         tk.Button(
             btn_frame,
-            text="Tablet",
-            width=9,
-            command=self._open_tablet_settings,
+            text="Settings",
+            width=12,
+            command=self._open_settings,
             bg="#27272a",
             fg="#fbbf24",
             relief="flat",
             cursor="hand2",
-        ).grid(row=0, column=1, padx=3, pady=3)
-
-        tk.Button(
-            btn_frame,
-            text="Display",
-            width=9,
-            command=self._open_display_settings,
-            bg="#27272a",
-            fg="#c084fc",
-            relief="flat",
-            cursor="hand2",
-        ).grid(row=0, column=2, padx=3, pady=3)
+        ).grid(row=0, column=1, padx=4, pady=3)
 
         self.btn_save = tk.Button(
             btn_frame,
             text="Save",
-            width=9,
+            width=12,
             command=self._force_save,
             bg="#27272a",
             fg="#4ade80",
             relief="flat",
             cursor="hand2",
         )
-        self.btn_save.grid(row=1, column=0, padx=3, pady=3)
+        self.btn_save.grid(row=1, column=0, padx=4, pady=3)
 
         self.btn_pause = tk.Button(
             btn_frame,
             text="Pause",
-            width=9,
+            width=12,
             command=self._toggle_pause,
             bg="#27272a",
             fg="#f4f4f5",
             relief="flat",
             cursor="hand2",
         )
-        self.btn_pause.grid(row=1, column=1, padx=3, pady=3)
-
-        tk.Button(
-            btn_frame,
-            text="Reset All",
-            width=9,
-            command=self._reset_counters,
-            bg="#27272a",
-            fg="#f87171",
-            relief="flat",
-            cursor="hand2",
-        ).grid(row=1, column=2, padx=3, pady=3)
+        self.btn_pause.grid(row=1, column=1, padx=4, pady=3)
 
     def _open_stats(self):
         if self.stats_window is not None and self.stats_window.win.winfo_exists():
@@ -3238,13 +3588,8 @@ class WacomTrackerApp:
             except Exception:
                 pass
 
-    def _reset_counters(self):
-        if not messagebox.askyesno(
-            "Reset All Distances",
-            "Reset all lifetime distances and daily graph history to 0?",
-            parent=self.root,
-        ):
-            return
+    def _execute_reset_counters(self):
+        """Clears all distance counters and daily history, refreshes views, and persists."""
         with self.lock:
             self.total_mm = 0.0
             self.draw_mm = 0.0
