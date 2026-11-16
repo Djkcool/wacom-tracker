@@ -3,6 +3,7 @@ import calendar
 import ctypes
 from ctypes import wintypes
 import datetime
+import io
 import json
 import math
 import os
@@ -12,9 +13,19 @@ import threading
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
+from typing import Any
 from PIL import Image, ImageDraw
 from pynput import mouse
 import pystray
+
+# Set an explicit AppUserModelID so Windows taskbar uses the custom window icon
+# instead of grouping under the generic python.exe / pythonw.exe icon
+try:
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+        "WacomTracker.StylusDistanceMonitor.1"
+    )
+except Exception:
+    pass
 
 # Enable per-monitor DPI awareness so Windows reports true physical pixels
 try:
@@ -360,6 +371,54 @@ hid.HidP_GetUsages.argtypes = [
 hid.HidP_GetUsages.restype = wintypes.LONG
 
 
+def _create_app_icon_image() -> Image.Image:
+    """Generates the 64x64 stylus/pen icon shared by the system tray and all windows."""
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Rounded dark badge background
+    draw.rounded_rectangle(
+        (2, 2, 61, 61),
+        radius=14,
+        fill=(24, 24, 27, 255),
+        outline=(56, 189, 248, 255),
+        width=3,
+    )
+
+    # Diagonal stylus body
+    draw.polygon(
+        [(43, 13), (51, 21), (26, 46), (18, 38)],
+        fill=(56, 189, 248, 255),
+    )
+    # Stylus nib
+    draw.polygon(
+        [(18, 38), (26, 46), (13, 51)],
+        fill=(244, 244, 245, 255),
+    )
+    # Grip accent ring
+    draw.line([(36, 20), (44, 28)], fill=(24, 24, 27, 255), width=3)
+
+    return img
+
+
+_WINDOW_ICON_PHOTOS: list[tk.PhotoImage] = []
+
+
+def _apply_window_icon(win: tk.Wm, as_default: bool = False):
+    """Applies the stylus icon across multiple resolutions to a Tk or Toplevel window."""
+    if not _WINDOW_ICON_PHOTOS:
+        base_img = _create_app_icon_image()
+        for sz in (16, 32, 48, 64):
+            resized = base_img.resize((sz, sz), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            resized.save(buf, format="PNG")
+            _WINDOW_ICON_PHOTOS.append(tk.PhotoImage(data=buf.getvalue()))
+    try:
+        win.iconphoto(as_default, *_WINDOW_ICON_PHOTOS)
+    except tk.TclError:
+        pass
+
+
 def detect_connected_displays() -> list[dict]:
     """Queries Windows for all active monitors with true physical resolution & offsets."""
     raw_monitors: list[dict] = []
@@ -493,6 +552,7 @@ class TabletSetupDialog:
         self.win.title("Wacom Tablet Setup")
         self.win.configure(bg="#18181b")
         self.win.resizable(False, False)
+        _apply_window_icon(self.win)
 
         _apply_dark_combobox_style(self.win)
 
@@ -758,6 +818,7 @@ class DisplaySetupDialog:
         self.win.title("Display Region Setup")
         self.win.configure(bg="#18181b")
         self.win.resizable(False, False)
+        _apply_window_icon(self.win)
 
         _apply_dark_combobox_style(self.win)
 
@@ -1160,6 +1221,7 @@ class SettingsWindow:
         self.win.title("Wacom Tracker Settings")
         self.win.configure(bg="#18181b")
         self.win.resizable(False, False)
+        _apply_window_icon(self.win)
 
         self._build_ui()
         self.sync_state()
@@ -1596,6 +1658,7 @@ class WacomStatsWindow:
         self.win.geometry("840x530")
         self.win.minsize(760, 420)
         self.win.configure(bg="#18181b")
+        _apply_window_icon(self.win)
 
         self.active_tab = "Graph"  # "Graph" or "Histogram"
         self.param_var = tk.StringVar(value="Drawn")
@@ -2489,42 +2552,13 @@ class WacomStatsWindow:
             self.win.destroy()
 
 
-def _create_tray_icon_image() -> Image.Image:
-    """Generates a crisp 64x64 stylus/pen icon for the Windows system tray."""
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    # Rounded dark badge background
-    draw.rounded_rectangle(
-        (2, 2, 61, 61),
-        radius=14,
-        fill=(24, 24, 27, 255),
-        outline=(56, 189, 248, 255),
-        width=3,
-    )
-
-    # Diagonal stylus body
-    draw.polygon(
-        [(43, 13), (51, 21), (26, 46), (18, 38)],
-        fill=(56, 189, 248, 255),
-    )
-    # Stylus nib
-    draw.polygon(
-        [(18, 38), (26, 46), (13, 51)],
-        fill=(244, 244, 245, 255),
-    )
-    # Grip accent ring
-    draw.line([(36, 20), (44, 28)], fill=(24, 24, 27, 255), width=3)
-
-    return img
-
-
 class WacomTrackerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Wacom Tracker")
         self.root.configure(bg="#18181b")
         self.root.resizable(False, False)
+        _apply_window_icon(self.root, as_default=True)
 
         # Tablet active area properties (loaded from JSON or configured on startup)
         self.tablet_model = DEFAULT_TABLET_MODEL
@@ -2580,7 +2614,7 @@ class WacomTrackerApp:
         self.unit_buttons: dict[str, tk.Button] = {}
         self.stats_window: WacomStatsWindow | None = None
         self.settings_window: SettingsWindow | None = None
-        self.tray_icon: pystray.Icon | None = None
+        self.tray_icon: Any = None
         self._is_quitting = False
 
         # Device caches
@@ -2676,13 +2710,14 @@ class WacomTrackerApp:
                 self._on_tray_quit,
             ),
         )
-        self.tray_icon = pystray.Icon(
+        icon = pystray.Icon(
             "wacom_tracker",
-            _create_tray_icon_image(),
+            _create_app_icon_image(),
             "Wacom Tracker",
             menu,
         )
-        self.tray_icon.run_detached()
+        icon.run_detached()
+        self.tray_icon = icon
 
     def _on_window_close(self):
         """Minimizes to the system tray or exits based on the tray toggle setting."""
