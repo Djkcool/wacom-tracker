@@ -14,11 +14,18 @@ Note: That this program was largly made by AI models (e.g. Gemini 4 Hydrogen) an
 
 ### 3rd Party Dependencies:
 - ```pynput```
+- ```pystray```
+- ```pillow```
 
-Can be installed with:
+#### Can be installed with:
 ```
-pip install pynput
+pip install pynput pystray pillow
 ```
+#### Verify all are installed with:
+```
+python -c "import pynput, pystray, PIL; print('All dependencies OK')"
+```
+If it says "All dependencies OK" then all the dependencies are installed.
 
 ### Setup: 
 1. Download the script and put it in a folder you intend to keep it in (Take note of this )
@@ -38,6 +45,7 @@ pip install pynput
 * Bar graph with distance data per day in the week/month or month in the year
 * Histogram with distance data for each day tracked that can be sorted by date or value
 * UI for easy setup and change of tablet and display settings and mappings to maintain accurate tracking
+* Minimises to the system-tray for background tracking
 
 ## Code of conduct
 Please check out our [Code of  Conduct](https://github.com/Djkcool/wacom-tracker/blob/main/CODE_OF_CONDUCT.md) for details on our code of conduct.
