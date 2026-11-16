@@ -29,8 +29,8 @@ pip install pynput
     - On the first start the program will ask for your tablet and display settings for accurate tracking
 
 ### Running:
-* Double click ```wacom_tracker.py```
-* In a terminal window run:  ```python wacom_tracker.py```
+* Double click ```wacom_tracker.pyw```
+* In a terminal window run:  ```pythonw wacom_tracker.pyw```
 
 ## Features
 * Accurate tracking of distance drawing/hovering/both using a Wacom tablet based on physical dimensions and pixel mappings
