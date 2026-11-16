@@ -2,7 +2,7 @@
 A program that tracks usage of a Wacom Tablet.
 
 ## AI Usage
-Note: That this program was largly made by AI models (e.g. Gemini 4 Hydrogen) and therefore contributions with AI are obviously allowed.
+Note: That this program was largely made by AI models (e.g. Gemini 4 Hydrogen) and therefore contributions with AI are obviously allowed.
 
 ## Launching
 
