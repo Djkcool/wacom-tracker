@@ -28,12 +28,16 @@ python -c "import pynput, pystray, PIL; print('All dependencies OK')"
 If it says "All dependencies OK" then all the dependencies are installed.
 
 ### Setup: 
-1. Download the script and put it in a folder you intend to keep it in (Take note of this )
+1. Make sure you meet all the requirements
+    - E.g. make sure you have the correct python version installed
+2. Download the script (```wacom_tracker.pyw```) and put it in a folder you intend to keep it in
     - The program will also store its data it this folder.
-2. (Optional) Create a shortcut to the script and put it in your Start menu folder (```%AppData%\Microsoft\Windows\Start Menu\Programs```)
-3. Install all the dependencies with the commands in the dependency section
-4. Run the program
-    - On the first start the program will ask for your tablet and display settings for accurate tracking
+    - Download from [Latest Release](https://github.com/Djkcool/wacom-tracker/releases/latest) for the latest stable version.
+    - Download the script straight from the repository to get access to the latest changes (may be unstable).
+3. (Optional) Create a shortcut to the script and put it in your Start menu folder (```%AppData%\Microsoft\Windows\Start Menu\Programs```)
+4. Install all the dependencies with the commands in the dependency section
+5. Run the program
+    - On the first start the program will ask for your tablet and display settings for accurate tracking.
 
 ### Running:
 * Double click ```wacom_tracker.pyw```
