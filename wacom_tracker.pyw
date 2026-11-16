@@ -92,11 +92,6 @@ RIM_TYPEHID = 2
 GWLP_WNDPROC = -4
 GA_ROOT = 2
 MONITORINFOF_PRIMARY = 0x00000001
-MONITOR_DEFAULTTONEAREST = 0x00000002
-SM_CXSIZEFRAME = 32
-SM_CYSIZEFRAME = 33
-SM_CYCAPTION = 4
-SM_CXPADDEDBORDER = 92
 
 WACOM_VID_STR = "VID_056A"
 WACOM_VID_INT = 0x056A
@@ -294,12 +289,6 @@ user32.GetMonitorInfoW.argtypes = [
 ]
 user32.GetMonitorInfoW.restype = wintypes.BOOL
 
-user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
-user32.MonitorFromWindow.restype = wintypes.HMONITOR
-
-user32.GetSystemMetrics.argtypes = [ctypes.c_int]
-user32.GetSystemMetrics.restype = ctypes.c_int
-
 user32.GetRawInputDeviceList.argtypes = [
     ctypes.POINTER(RAWINPUTDEVICELIST),
     ctypes.POINTER(wintypes.UINT),
@@ -428,73 +417,6 @@ def _apply_window_icon(win: tk.Wm, as_default: bool = False):
         win.iconphoto(as_default, *_WINDOW_ICON_PHOTOS)
     except tk.TclError:
         pass
-
-
-def _position_window_on_parent(
-    win: tk.Toplevel,
-    parent: tk.Misc,
-    width: int | None = None,
-    height: int | None = None,
-):
-    """Centers `win` over `parent` and clamps its full outer frame inside the monitor's work area."""
-    parent.update_idletasks()
-    win.update_idletasks()
-
-    client_w = width if width is not None else win.winfo_reqwidth()
-    client_h = height if height is not None else win.winfo_reqheight()
-
-    # Calculate outer frame chrome (title bar + borders) so nothing clips off-screen
-    border_x = user32.GetSystemMetrics(SM_CXSIZEFRAME) + user32.GetSystemMetrics(
-        SM_CXPADDEDBORDER
-    )
-    border_y = user32.GetSystemMetrics(SM_CYSIZEFRAME) + user32.GetSystemMetrics(
-        SM_CXPADDEDBORDER
-    )
-    caption_h = user32.GetSystemMetrics(SM_CYCAPTION)
-
-    outer_w = client_w + (border_x * 2)
-    outer_h = client_h + caption_h + (border_y * 2)
-
-    # Query the work area (excluding taskbar) of the monitor hosting the parent window
-    parent_hwnd = user32.GetAncestor(parent.winfo_id(), GA_ROOT) or parent.winfo_id()
-    h_mon = user32.MonitorFromWindow(parent_hwnd, MONITOR_DEFAULTTONEAREST)
-    mon_info = MONITORINFOEXW()
-    mon_info.cbSize = ctypes.sizeof(MONITORINFOEXW)
-
-    if h_mon and user32.GetMonitorInfoW(h_mon, ctypes.byref(mon_info)):
-        work = mon_info.rcWork
-        wx0, wy0, wx1, wy1 = (
-            int(work.left),
-            int(work.top),
-            int(work.right),
-            int(work.bottom),
-        )
-    else:
-        wx0, wy0 = 0, 0
-        wx1, wy1 = win.winfo_screenwidth(), win.winfo_screenheight()
-
-    if parent.winfo_viewable():
-        # Convert parent's client origin to outer window origin
-        px = parent.winfo_rootx() - border_x
-        py = parent.winfo_rooty() - caption_h - border_y
-        pw = parent.winfo_width() + (border_x * 2)
-        ph = parent.winfo_height() + caption_h + (border_y * 2)
-        x = px + (pw - outer_w) // 2
-        y = py + (ph - outer_h) // 2
-    else:
-        x = wx0 + ((wx1 - wx0) - outer_w) // 2
-        y = wy0 + ((wy1 - wy0) - outer_h) // 2
-
-    # Clamp full outer window rectangle inside the monitor's usable work area
-    max_x = max(wx0, wx1 - outer_w)
-    max_y = max(wy0, wy1 - outer_h)
-    x = max(wx0, min(x, max_x))
-    y = max(wy0, min(y, max_y))
-
-    if width is not None and height is not None:
-        win.geometry(f"{client_w}x{client_h}+{x}+{y}")
-    else:
-        win.geometry(f"+{x}+{y}")
 
 
 def detect_connected_displays() -> list[dict]:
@@ -658,7 +580,13 @@ class TabletSetupDialog:
         self.height_var.trace_add("write", self._on_dimension_typed)
 
         self.win.protocol("WM_DELETE_WINDOW", self._on_cancel)
-        _position_window_on_parent(self.win, parent)
+        self.win.update_idletasks()
+
+        sw = self.win.winfo_screenwidth()
+        sh = self.win.winfo_screenheight()
+        ww = self.win.winfo_reqwidth()
+        wh = self.win.winfo_reqheight()
+        self.win.geometry(f"+{(sw - ww) // 2}+{(sh - wh) // 2}")
 
         self.win.grab_set()
         self.win.focus_force()
@@ -926,7 +854,13 @@ class DisplaySetupDialog:
             var.trace_add("write", self._on_values_typed)
 
         self.win.protocol("WM_DELETE_WINDOW", self._on_cancel)
-        _position_window_on_parent(self.win, parent)
+        self.win.update_idletasks()
+
+        sw = self.win.winfo_screenwidth()
+        sh = self.win.winfo_screenheight()
+        ww = self.win.winfo_reqwidth()
+        wh = self.win.winfo_reqheight()
+        self.win.geometry(f"+{(sw - ww) // 2}+{(sh - wh) // 2}")
 
         self.win.grab_set()
         self.win.focus_force()
@@ -1293,7 +1227,32 @@ class SettingsWindow:
         self.sync_state()
 
         self.win.protocol("WM_DELETE_WINDOW", self.close)
-        _position_window_on_parent(self.win, self.app.root)
+        self.app.root.update_idletasks()
+        self.win.update_idletasks()
+
+        ww = self.win.winfo_reqwidth()
+        wh = self.win.winfo_reqheight()
+
+        if self.app.root.winfo_viewable():
+            rx = self.app.root.winfo_rootx()
+            ry = self.app.root.winfo_rooty()
+            rw = self.app.root.winfo_width()
+            rh = self.app.root.winfo_height()
+            x = rx + (rw - ww) // 2
+            y = ry + (rh - wh) // 2
+        else:
+            x = (self.win.winfo_screenwidth() - ww) // 2
+            y = (self.win.winfo_screenheight() - wh) // 2
+
+        # Clamp within virtual desktop bounds so multi-monitor positions never clip off-screen
+        vx0 = self.win.winfo_vrootx()
+        vy0 = self.win.winfo_vrooty()
+        vx1 = vx0 + self.win.winfo_vrootwidth()
+        vy1 = vy0 + self.win.winfo_vrootheight()
+        x = max(vx0, min(x, vx1 - ww))
+        y = max(vy0, min(y, vy1 - wh))
+
+        self.win.geometry(f"+{x}+{y}")
 
         self.win.grab_set()
         self.win.lift()
@@ -1748,7 +1707,31 @@ class WacomStatsWindow:
         self.win.protocol("WM_DELETE_WINDOW", self.close)
         self.redraw()
 
-        _position_window_on_parent(self.win, self.app.root, width=840, height=530)
+        self.app.root.update_idletasks()
+        self.win.update_idletasks()
+
+        ww = 840
+        wh = 530
+
+        if self.app.root.winfo_viewable():
+            rx = self.app.root.winfo_rootx()
+            ry = self.app.root.winfo_rooty()
+            rw = self.app.root.winfo_width()
+            rh = self.app.root.winfo_height()
+            x = rx + (rw - ww) // 2
+            y = ry + (rh - wh) // 2
+        else:
+            x = (self.win.winfo_screenwidth() - ww) // 2
+            y = (self.win.winfo_screenheight() - wh) // 2
+
+        vx0 = self.win.winfo_vrootx()
+        vy0 = self.win.winfo_vrooty()
+        vx1 = vx0 + self.win.winfo_vrootwidth()
+        vy1 = vy0 + self.win.winfo_vrootheight()
+        x = max(vx0, min(x, vx1 - ww))
+        y = max(vy0, min(y, vy1 - wh))
+
+        self.win.geometry(f"{ww}x{wh}+{x}+{y}")
 
         self.win.lift()
         self.win.focus_force()
@@ -2918,7 +2901,6 @@ class WacomTrackerApp:
     def _open_settings(self):
         if self.settings_window is not None and self.settings_window.win.winfo_exists():
             self.settings_window.win.deiconify()
-            _position_window_on_parent(self.settings_window.win, self.root)
             self.settings_window.win.lift()
             self.settings_window.win.focus_force()
             self.settings_window.sync_state()
@@ -3527,23 +3509,6 @@ class WacomTrackerApp:
 
         self._style_unit_buttons()
 
-        # Lifetime Total
-        tk.Label(
-            self.root,
-            text="Lifetime Total (Hover + Draw)",
-            font=("Segoe UI", 9),
-            fg="#71717a",
-            bg="#18181b",
-        ).pack()
-        self.lbl_total = tk.Label(
-            self.root,
-            text="0.00 km",
-            font=("Consolas", 15, "bold"),
-            fg="#f4f4f5",
-            bg="#18181b",
-        )
-        self.lbl_total.pack(padx=16, pady=5)
-
         # Lifetime Drawing Only
         tk.Label(
             self.root,
@@ -3578,15 +3543,50 @@ class WacomTrackerApp:
         )
         self.lbl_hover.pack(padx=16, pady=5)
 
-        # Current Session
-        self.lbl_session = tk.Label(
+        # Lifetime Total
+        tk.Label(
             self.root,
-            text="Session: 0.00 km drawn  |  0.00 km hover  |  0.00 km total",
+            text="Lifetime Total (Hover + Draw)",
             font=("Segoe UI", 9),
-            fg="#a1a1aa",
+            fg="#71717a",
+            bg="#18181b",
+        ).pack()
+        self.lbl_total = tk.Label(
+            self.root,
+            text="0.00 km",
+            font=("Consolas", 15, "bold"),
+            fg="#f4f4f5",
             bg="#18181b",
         )
-        self.lbl_session.pack(padx=14, pady=(6, 10))
+        self.lbl_total.pack(padx=16, pady=5)
+
+        # Current Session (vertical breakdown so the window width stays locked)
+        session_card = tk.Frame(
+            self.root,
+            bg="#1f1f23",
+            highlightbackground="#2e2e34",
+            highlightthickness=1,
+        )
+        session_card.pack(fill="x", padx=16, pady=(8, 12))
+
+        tk.Label(
+            session_card,
+            text="CURRENT SESSION",
+            font=("Segoe UI", 7, "bold"),
+            fg="#71717a",
+            bg="#1f1f23",
+            anchor="w",
+        ).pack(fill="x", padx=10, pady=(6, 3))
+
+        self.lbl_session_draw = self._add_session_row(
+            session_card, "Drawn", "#38bdf8"
+        )
+        self.lbl_session_hover = self._add_session_row(
+            session_card, "Hover", "#a78bfa"
+        )
+        self.lbl_session_total = self._add_session_row(
+            session_card, "Total", "#f4f4f5", pad_bottom=7
+        )
 
         # Controls (2x2 symmetrical grid)
         btn_frame = tk.Frame(self.root, bg="#18181b")
@@ -3638,12 +3638,40 @@ class WacomTrackerApp:
         )
         self.btn_pause.grid(row=1, column=1, padx=4, pady=3)
 
+    def _add_session_row(
+        self,
+        parent: tk.Frame,
+        label_text: str,
+        value_color: str,
+        pad_bottom: int = 2,
+    ) -> tk.Label:
+        row = tk.Frame(parent, bg="#1f1f23")
+        row.pack(fill="x", padx=10, pady=(1, pad_bottom))
+
+        tk.Label(
+            row,
+            text=label_text,
+            font=("Segoe UI", 8),
+            fg="#a1a1aa",
+            bg="#1f1f23",
+            anchor="w",
+        ).pack(side="left")
+
+        val_lbl = tk.Label(
+            row,
+            text="0.00 km",
+            font=("Consolas", 9, "bold"),
+            fg=value_color,
+            bg="#1f1f23",
+            anchor="e",
+            width=12,
+        )
+        val_lbl.pack(side="right")
+        return val_lbl
+
     def _open_stats(self):
         if self.stats_window is not None and self.stats_window.win.winfo_exists():
             self.stats_window.win.deiconify()
-            _position_window_on_parent(
-                self.stats_window.win, self.root, width=840, height=530
-            )
             self.stats_window.win.lift()
             self.stats_window.win.focus_force()
             self.stats_window.redraw()
@@ -3743,13 +3771,9 @@ class WacomTrackerApp:
         self.lbl_total.config(text=self._format_lifetime(t_mm))
         self.lbl_draw.config(text=self._format_lifetime(d_mm))
         self.lbl_hover.config(text=self._format_lifetime(h_mm))
-        self.lbl_session.config(
-            text=(
-                f"Session: {self._format_session_val(sd_mm)} drawn  |  "
-                f"{self._format_session_val(sh_mm)} hover  |  "
-                f"{self._format_session_val(st_mm)} total"
-            )
-        )
+        self.lbl_session_draw.config(text=self._format_session_val(sd_mm))
+        self.lbl_session_hover.config(text=self._format_session_val(sh_mm))
+        self.lbl_session_total.config(text=self._format_session_val(st_mm))
 
     def _update_loop(self):
         if self._is_quitting:
