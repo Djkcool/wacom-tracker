@@ -2793,9 +2793,6 @@ class WacomTrackerApp:
                 "total_mm": round(self.total_mm, 3),
                 "draw_mm": round(self.draw_mm, 3),
                 "hover_mm": round(self.hover_mm, 3),
-                "total_km": round(self.total_mm / 1_000_000.0, 6),
-                "draw_km": round(self.draw_mm / 1_000_000.0, 6),
-                "hover_km": round(self.hover_mm / 1_000_000.0, 6),
                 "unit": self.unit,
                 "daily": daily_out,
             }
