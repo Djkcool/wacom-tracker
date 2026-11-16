@@ -2204,6 +2204,7 @@ class WacomTrackerApp:
         self.session_hover_mm = 0.0
         self.daily: dict[str, dict[str, float]] = {}
         self.unit = "km"
+        self.minimize_to_tray = True
 
         # Direct HID tracking state (works in OneNote & all Windows Ink apps)
         self.last_hid_pos_mm: tuple[float, float] | None = None
@@ -2290,8 +2291,7 @@ class WacomTrackerApp:
         )
         self.listener.start()
 
-        # Clicking the window's X button minimizes to the system tray instead of exiting
-        self.root.protocol("WM_DELETE_WINDOW", self._minimize_to_tray)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
         self._update_loop()
 
     def _start_tray_icon(self):
@@ -2306,6 +2306,11 @@ class WacomTrackerApp:
                 lambda _item: "Resume Tracking" if self.paused else "Pause Tracking",
                 self._on_tray_toggle_pause,
             ),
+            pystray.MenuItem(
+                "Minimize to Tray on Close",
+                self._on_tray_toggle_minimize,
+                checked=lambda _item: self.minimize_to_tray,
+            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Quit",
@@ -2319,6 +2324,16 @@ class WacomTrackerApp:
             menu,
         )
         self.tray_icon.run_detached()
+
+    def _on_window_close(self):
+        """Minimizes to the system tray or exits based on the tray toggle setting."""
+        with self.lock:
+            should_minimize = self.minimize_to_tray
+
+        if should_minimize:
+            self._minimize_to_tray()
+        else:
+            self._quit_app()
 
     def _minimize_to_tray(self):
         """Hides the main (and stats) window to the system tray while tracking continues."""
@@ -2341,6 +2356,23 @@ class WacomTrackerApp:
 
     def _on_tray_toggle_pause(self, _icon=None, _item=None):
         self.root.after(0, self._toggle_pause)
+
+    def _on_tray_toggle_minimize(self, _icon=None, _item=None):
+        self.root.after(0, self._toggle_minimize_to_tray)
+
+    def _toggle_minimize_to_tray(self):
+        with self.lock:
+            self.minimize_to_tray = not self.minimize_to_tray
+            enabled = self.minimize_to_tray
+        if self.tray_icon is not None:
+            try:
+                self.tray_icon.update_menu()
+            except Exception:
+                pass
+        self._save_data()
+        # If the user disabled minimize-to-tray while the window is already hidden, restore it
+        if not enabled and not self.root.winfo_viewable():
+            self._restore_from_tray()
 
     def _on_tray_quit(self, _icon=None, _item=None):
         self.root.after(0, self._quit_app)
@@ -2802,6 +2834,10 @@ class WacomTrackerApp:
                 if saved_unit in UNITS:
                     self.unit = saved_unit
 
+                saved_min_tray = data.get("minimize_to_tray", True)
+                if isinstance(saved_min_tray, bool):
+                    self.minimize_to_tray = saved_min_tray
+
                 # Validate tablet properties in save file
                 raw_tw = data.get("tablet_width_mm")
                 raw_th = data.get("tablet_height_mm")
@@ -2858,7 +2894,7 @@ class WacomTrackerApp:
             self.needs_display_setup = True
 
     def _save_data(self) -> bool:
-        """Atomically writes tablet, display, distance totals, daily history, and unit to disk."""
+        """Atomically writes tablet, display, distance totals, daily history, and settings to disk."""
         with self.lock:
             daily_out = {
                 day_key: {
@@ -2881,6 +2917,7 @@ class WacomTrackerApp:
                 "draw_mm": round(self.draw_mm, 3),
                 "hover_mm": round(self.hover_mm, 3),
                 "unit": self.unit,
+                "minimize_to_tray": self.minimize_to_tray,
                 "daily": daily_out,
             }
         tmp_file = f"{SAVE_FILE}.tmp"
