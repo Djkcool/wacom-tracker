@@ -12,7 +12,9 @@ import threading
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
+from PIL import Image, ImageDraw
 from pynput import mouse
+import pystray
 
 # Enable per-monitor DPI awareness so Windows reports true physical pixels
 try:
@@ -2129,6 +2131,36 @@ class WacomStatsWindow:
             self.win.destroy()
 
 
+def _create_tray_icon_image() -> Image.Image:
+    """Generates a crisp 64x64 stylus/pen icon for the Windows system tray."""
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Rounded dark badge background
+    draw.rounded_rectangle(
+        (2, 2, 61, 61),
+        radius=14,
+        fill=(24, 24, 27, 255),
+        outline=(56, 189, 248, 255),
+        width=3,
+    )
+
+    # Diagonal stylus body
+    draw.polygon(
+        [(43, 13), (51, 21), (26, 46), (18, 38)],
+        fill=(56, 189, 248, 255),
+    )
+    # Stylus nib
+    draw.polygon(
+        [(18, 38), (26, 46), (13, 51)],
+        fill=(244, 244, 245, 255),
+    )
+    # Grip accent ring
+    draw.line([(36, 20), (44, 28)], fill=(24, 24, 27, 255), width=3)
+
+    return img
+
+
 class WacomTrackerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -2188,6 +2220,8 @@ class WacomTrackerApp:
         self._save_btn_after_id: str | None = None
         self.unit_buttons: dict[str, tk.Button] = {}
         self.stats_window: WacomStatsWindow | None = None
+        self.tray_icon: pystray.Icon | None = None
+        self._is_quitting = False
 
         # Device caches
         self.device_is_wacom: dict[int, bool] = {}
@@ -2247,6 +2281,7 @@ class WacomTrackerApp:
         self._build_ui()
         self._setup_raw_input_filter()
         self._register_exit_hooks()
+        self._start_tray_icon()
 
         # Fallback listener when a Wacom profile uses legacy mouse injection
         self.listener = mouse.Listener(
@@ -2255,8 +2290,60 @@ class WacomTrackerApp:
         )
         self.listener.start()
 
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Clicking the window's X button minimizes to the system tray instead of exiting
+        self.root.protocol("WM_DELETE_WINDOW", self._minimize_to_tray)
         self._update_loop()
+
+    def _start_tray_icon(self):
+        """Creates and runs the background system tray icon."""
+        menu = pystray.Menu(
+            pystray.MenuItem(
+                "Open Wacom Tracker",
+                self._on_tray_open,
+                default=True,
+            ),
+            pystray.MenuItem(
+                lambda _item: "Resume Tracking" if self.paused else "Pause Tracking",
+                self._on_tray_toggle_pause,
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "Quit",
+                self._on_tray_quit,
+            ),
+        )
+        self.tray_icon = pystray.Icon(
+            "wacom_tracker",
+            _create_tray_icon_image(),
+            "Wacom Tracker",
+            menu,
+        )
+        self.tray_icon.run_detached()
+
+    def _minimize_to_tray(self):
+        """Hides the main (and stats) window to the system tray while tracking continues."""
+        self._save_data()
+        if self.stats_window is not None and self.stats_window.win.winfo_exists():
+            self.stats_window.close()
+        self.root.withdraw()
+
+    def _restore_from_tray(self):
+        """Brings the main window back from the system tray."""
+        if self._is_quitting:
+            return
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        self._refresh_display()
+
+    def _on_tray_open(self, _icon=None, _item=None):
+        self.root.after(0, self._restore_from_tray)
+
+    def _on_tray_toggle_pause(self, _icon=None, _item=None):
+        self.root.after(0, self._toggle_pause)
+
+    def _on_tray_quit(self, _icon=None, _item=None):
+        self.root.after(0, self._quit_app)
 
     def _apply_tablet_properties(self, model_name: str, width_mm: float, height_mm: float):
         with self.lock:
@@ -3108,6 +3195,11 @@ class WacomTrackerApp:
             self.last_cursor_pos = None
             paused = self.paused
         self.btn_pause.config(text="Resume" if paused else "Pause")
+        if self.tray_icon is not None:
+            try:
+                self.tray_icon.update_menu()
+            except Exception:
+                pass
 
     def _reset_counters(self):
         if not messagebox.askyesno(
@@ -3142,6 +3234,17 @@ class WacomTrackerApp:
             wacom_any = (
                 now - self.last_wacom_any_time
             ) < 0.25 and not self.physical_mouse_active
+            paused = self.paused
+
+        if self.tray_icon is not None:
+            state_tag = " (Paused)" if paused else ""
+            self.tray_icon.title = (
+                f"Wacom Tracker{state_tag}\n"
+                f"Drawn: {self._format_lifetime(d_mm)} | Total: {self._format_lifetime(t_mm)}"
+            )
+
+        if not self.root.winfo_viewable():
+            return
 
         if hid_active:
             self.lbl_source.config(text="Input: Wacom HID (Direct)", fg="#4ade80")
@@ -3162,8 +3265,15 @@ class WacomTrackerApp:
         )
 
     def _update_loop(self):
+        if self._is_quitting:
+            return
+
         self._refresh_display()
-        if self.stats_window is not None and self.stats_window.win.winfo_exists():
+        if (
+            self.stats_window is not None
+            and self.stats_window.win.winfo_exists()
+            and self.stats_window.win.winfo_viewable()
+        ):
             self.stats_window.redraw()
 
         # Auto-save every ~5 seconds
@@ -3174,12 +3284,22 @@ class WacomTrackerApp:
 
         self.root.after(200, self._update_loop)
 
-    def _on_close(self):
+    def _quit_app(self):
+        """Stops background listeners and tray icon, saves data, and exits cleanly."""
+        if self._is_quitting:
+            return
+        self._is_quitting = True
         self._save_data()
         try:
             self.listener.stop()
         except Exception:
             pass
+        if self.tray_icon is not None:
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
+            self.tray_icon = None
         self._save_data()
         self.root.destroy()
 
