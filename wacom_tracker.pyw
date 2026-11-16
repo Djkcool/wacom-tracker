@@ -532,6 +532,90 @@ def _apply_dark_combobox_style(widget: tk.Misc):
     )
 
 
+def _get_monitor_work_area(hwnd: int | None = None) -> tuple[int, int, int, int]:
+    """Returns (left, top, right, bottom) work area in physical pixels for the target monitor."""
+    MONITOR_DEFAULTTOPRIMARY = 0x00000001
+    MONITOR_DEFAULTTONEAREST = 0x00000002
+
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.MonitorFromWindow.restype = wintypes.HMONITOR
+
+    if hwnd:
+        h_mon = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+    else:
+        h_mon = user32.MonitorFromWindow(None, MONITOR_DEFAULTTOPRIMARY)
+
+    info = MONITORINFOEXW()
+    info.cbSize = ctypes.sizeof(MONITORINFOEXW)
+    if h_mon and user32.GetMonitorInfoW(h_mon, ctypes.byref(info)):
+        r = info.rcWork
+        return int(r.left), int(r.top), int(r.right), int(r.bottom)
+
+    return 0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+
+
+def _center_on_desktop(
+    win: tk.Tk | tk.Toplevel,
+    parent: tk.Misc | None = None,
+    width: int | None = None,
+    height: int | None = None,
+):
+    """Centers a window inside the target monitor's real Win32 work area (taskbar-safe)."""
+
+    def _apply():
+        if not win.winfo_exists():
+            return
+        win.update_idletasks()
+
+        top_hwnd = user32.GetAncestor(win.winfo_id(), GA_ROOT) or win.winfo_id()
+        parent_hwnd = None
+        if parent is not None and parent.winfo_exists() and parent.winfo_viewable():
+            parent_hwnd = (
+                user32.GetAncestor(parent.winfo_id(), GA_ROOT) or parent.winfo_id()
+            )
+
+        wx0, wy0, wx1, wy1 = _get_monitor_work_area(parent_hwnd)
+        work_w = max(100, wx1 - wx0)
+        work_h = max(100, wy1 - wy0)
+
+        rect = wintypes.RECT()
+        user32.GetWindowRect(top_hwnd, ctypes.byref(rect))
+        outer_w = rect.right - rect.left
+        outer_h = rect.bottom - rect.top
+        client_w = max(1, win.winfo_width())
+        client_h = max(1, win.winfo_height())
+
+        # Account for title bar + borders when sizing
+        frame_w = max(0, outer_w - client_w) if outer_w >= client_w else 16
+        frame_h = max(0, outer_h - client_h) if outer_h >= client_h else 39
+
+        req_w = width if width is not None else max(win.winfo_reqwidth(), client_w)
+        req_h = height if height is not None else max(win.winfo_reqheight(), client_h)
+        total_w = req_w + frame_w
+        total_h = req_h + frame_h
+
+        if parent_hwnd:
+            p_rect = wintypes.RECT()
+            user32.GetWindowRect(parent_hwnd, ctypes.byref(p_rect))
+            x = p_rect.left + ((p_rect.right - p_rect.left) - total_w) // 2
+            y = p_rect.top + ((p_rect.bottom - p_rect.top) - total_h) // 2
+        else:
+            x = wx0 + (work_w - total_w) // 2
+            y = wy0 + (work_h - total_h) // 2
+
+        # Clamp strictly inside the monitor's usable work area
+        x = max(wx0 + 8, min(x, wx1 - total_w - 8))
+        y = max(wy0 + 8, min(y, wy1 - total_h - 8))
+
+        if width is not None and height is not None:
+            win.geometry(f"{req_w}x{req_h}+{x}+{y}")
+        else:
+            win.geometry(f"+{x}+{y}")
+
+    _apply()
+    win.after_idle(_apply)
+
+
 class TabletSetupDialog:
     """Modal dialog for selecting or customizing Wacom tablet active area dimensions."""
 
@@ -580,13 +664,7 @@ class TabletSetupDialog:
         self.height_var.trace_add("write", self._on_dimension_typed)
 
         self.win.protocol("WM_DELETE_WINDOW", self._on_cancel)
-        self.win.update_idletasks()
-
-        sw = self.win.winfo_screenwidth()
-        sh = self.win.winfo_screenheight()
-        ww = self.win.winfo_reqwidth()
-        wh = self.win.winfo_reqheight()
-        self.win.geometry(f"+{(sw - ww) // 2}+{(sh - wh) // 2}")
+        _center_on_desktop(self.win, self.parent)
 
         self.win.grab_set()
         self.win.focus_force()
@@ -854,13 +932,7 @@ class DisplaySetupDialog:
             var.trace_add("write", self._on_values_typed)
 
         self.win.protocol("WM_DELETE_WINDOW", self._on_cancel)
-        self.win.update_idletasks()
-
-        sw = self.win.winfo_screenwidth()
-        sh = self.win.winfo_screenheight()
-        ww = self.win.winfo_reqwidth()
-        wh = self.win.winfo_reqheight()
-        self.win.geometry(f"+{(sw - ww) // 2}+{(sh - wh) // 2}")
+        _center_on_desktop(self.win, self.parent)
 
         self.win.grab_set()
         self.win.focus_force()
@@ -1227,32 +1299,7 @@ class SettingsWindow:
         self.sync_state()
 
         self.win.protocol("WM_DELETE_WINDOW", self.close)
-        self.app.root.update_idletasks()
-        self.win.update_idletasks()
-
-        ww = self.win.winfo_reqwidth()
-        wh = self.win.winfo_reqheight()
-
-        if self.app.root.winfo_viewable():
-            rx = self.app.root.winfo_rootx()
-            ry = self.app.root.winfo_rooty()
-            rw = self.app.root.winfo_width()
-            rh = self.app.root.winfo_height()
-            x = rx + (rw - ww) // 2
-            y = ry + (rh - wh) // 2
-        else:
-            x = (self.win.winfo_screenwidth() - ww) // 2
-            y = (self.win.winfo_screenheight() - wh) // 2
-
-        # Clamp within virtual desktop bounds so multi-monitor positions never clip off-screen
-        vx0 = self.win.winfo_vrootx()
-        vy0 = self.win.winfo_vrooty()
-        vx1 = vx0 + self.win.winfo_vrootwidth()
-        vy1 = vy0 + self.win.winfo_vrootheight()
-        x = max(vx0, min(x, vx1 - ww))
-        y = max(vy0, min(y, vy1 - wh))
-
-        self.win.geometry(f"+{x}+{y}")
+        _center_on_desktop(self.win, self.app.root)
 
         self.win.grab_set()
         self.win.lift()
@@ -1707,31 +1754,7 @@ class WacomStatsWindow:
         self.win.protocol("WM_DELETE_WINDOW", self.close)
         self.redraw()
 
-        self.app.root.update_idletasks()
-        self.win.update_idletasks()
-
-        ww = 840
-        wh = 530
-
-        if self.app.root.winfo_viewable():
-            rx = self.app.root.winfo_rootx()
-            ry = self.app.root.winfo_rooty()
-            rw = self.app.root.winfo_width()
-            rh = self.app.root.winfo_height()
-            x = rx + (rw - ww) // 2
-            y = ry + (rh - wh) // 2
-        else:
-            x = (self.win.winfo_screenwidth() - ww) // 2
-            y = (self.win.winfo_screenheight() - wh) // 2
-
-        vx0 = self.win.winfo_vrootx()
-        vy0 = self.win.winfo_vrooty()
-        vx1 = vx0 + self.win.winfo_vrootwidth()
-        vy1 = vy0 + self.win.winfo_vrootheight()
-        x = max(vx0, min(x, vx1 - ww))
-        y = max(vy0, min(y, vy1 - wh))
-
-        self.win.geometry(f"{ww}x{wh}+{x}+{y}")
+        _center_on_desktop(self.win, self.app.root, 840, 530)
 
         self.win.lift()
         self.win.focus_force()
@@ -2722,6 +2745,7 @@ class WacomTrackerApp:
             )
 
         self._build_ui()
+        _center_on_desktop(self.root)
         self._setup_raw_input_filter()
         self._register_exit_hooks()
         self._start_tray_icon()
@@ -2792,6 +2816,7 @@ class WacomTrackerApp:
         if self._is_quitting:
             return
         self.root.deiconify()
+        _center_on_desktop(self.root)
         self.root.lift()
         self.root.focus_force()
         self._refresh_display()
